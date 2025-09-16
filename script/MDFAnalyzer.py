@@ -1,6 +1,5 @@
 import os
 import asammdf
-import shutil
 import inspect
 import threading
 import collections
@@ -9,8 +8,10 @@ import openpyxl.cell.cell
 import time
 import traceback
 from glob import glob
+from typing import List, Dict, Any
 
-from typing import List, Dict
+import Downloader
+from Downloader import DownloadPath, DownloadStatus
 
 class MDFAnalyzer:
     def __init__(self, xlsx_path: str):
@@ -54,6 +55,7 @@ class MDFAnalyzer:
 
         ### MDFディレクトリ
         if mdf_dir is not None:
+            mdf_dir = mdf_dir.replace("\\", "/")
             if mdf_dir[-1] != "/": mdf_dir += "/"
             if self.__mdf_dir_data.value != mdf_dir:
                 analysis_update = True
@@ -75,69 +77,78 @@ class MDFAnalyzer:
 
         if analysis_update: self.updateMDFList()
 
-    def calculate(self, re_calc: bool = False):
+    def calculate(self, re_calc: bool = False, mdf_copy: bool = True):
+        download_list: List[DownloadPath] = []
+        analysis_list: List[List[Any]] = []
+
         ### 全部再計算
         if re_calc: self.updateMDFList()
 
         ### MDFダウンロード先フォルダ
-        os.makedirs("temp/", exist_ok=True)
+        if mdf_copy: os.makedirs("temp/", exist_ok=True)
 
-        download_list: List[str] = []
-        downloader: threading.Thread = None
-        threads: List[threading.Thread] = []
+        ### 1行ずつ確認
         row: int = 3
-        while self.__analysis_data(row,1).value is not None:
-            col: int = 2
+        mdf_name: str = self.__analysis_data(row, 1).value
+        while mdf_name is not None:
             functions: Dict[int, str] = {}
+
+            ### データは2列目以降
+            col: int = 2
             while self.__analysis_data(1, col).value is not None:
-                ### 数値以外であれば計算対象
-                if type(self.__analysis_data(row, col).value) != float and type(self.__analysis_data(row, col).value) != int:
+                ### 何もデータがなければ再計算対象
+                if self.__analysis_data(row, col).value is not None:
                     functions[col] = self.__analysis_data(2, col).value
                 col += 1
 
             ### 計算対象があれば，別スレッドで計算して格納まで実施
-            if len(functions.keys()) > 0:
-                thread = threading.Thread(
-                    target=self.__analysisMDF,
-                    args=[self.__analysis_data(row, 1).value, row, functions],
-                    name=self.__analysis_data(row, 1).value
+            if len(functions) > 0:
+                paths = DownloadPath(
+                    self.__mdf_dir_data.value + mdf_name,
+                    "temp/" + mdf_name if mdf_copy else self.__mdf_dir_data.value + mdf_name,
+                    DownloadStatus.NoCopy if mdf_copy else DownloadStatus.Complete
                 )
-                threads.append(thread)
-                download_list.append(self.__analysis_data(row, 1).value)
-            row += 1
+                download_list.append(paths)
+                analysis_list.append([paths, row, functions])
+                
+            ### 次回処理
+            row += 1 
+            mdf_name = self.__analysis_data(row, 1).value
         
-        if len(download_list) > 0:
-            downloader = threading.Thread(target=self.__downloadMDF, args=[download_list])
-            downloader.start()
-        for thread in threads: 
-            thread.start()
-            thread.join()
-        if downloader is not None: downloader.join()
+        ### ダウンロードが必要な場合はダウンローダ起動
+        if len(download_list) > 0 and mdf_copy:
+            threading.Thread(target=Downloader.downloadFiles, args=[download_list]).start()
+            
+        ### 解析開始
+        for analysis_args in analysis_list:
+            while threading.active_count() > 5: time.sleep(1)
+            threading.Thread(target=self.__analysisMDF, args=analysis_args).start()
 
-    def __downloadMDF(self, mdf_names: List[str]):
-        ### MDFをコピー
-        for mdf_name in mdf_names:
-            shutil.copy(self.__mdf_dir_data.value + mdf_name, f"temp/{mdf_name}")
-
-    def __analysisMDF(self, mdf_name: str, row: int, functions: Dict[int, str]):
+    def __analysisMDF(self, mdf_paths: DownloadPath, row: int, functions: Dict[int, str]):
         ### ダウンロード完了待ち
-        while not os.path.exists(f"temp/{mdf_name}"): time.sleep(1)
+        while mdf_paths.status == DownloadStatus.Complete: time.sleep(1)
         
         try:
             ### MDF読み込み
-            mdf = asammdf.MDF(f"temp/{mdf_name}")
+            mdf = asammdf.MDF(mdf_paths.dst)
             dataframe = mdf.to_dataframe(self.__labels_data.value.split(","), raster=self.__calc_rate_data.value)
 
             ### データフレームを渡す
             for col, func in functions.items():
-                self.__callFunction(func, mdf_name, dataframe, self.__analysis_data(row, col))
+                self.__callFunction(func, mdf_paths.dst, dataframe, self.__analysis_data(row, col))
         except Exception as e:
-            pass
+            err: str = "Traceback (most recent call last):\n"
+            for trace in traceback.extract_tb(e.__traceback__):
+                err += f"  File \"{trace.filename}\", line {trace.lineno}, in {trace.name}\n"
+                err += f"    {trace.line}\n"        
+            err += f"{type(e).__name__}: {",".join(e.args)}"
+            print(err)
         
         ### コピーファイルを削除（失敗時は最大5回まで再試行する）
         for i in range(5):
             try: 
-                os.remove(f"temp/{mdf_name}")
+                os.remove(mdf_paths.dst)
+                mdf_paths.status = DownloadStatus.NoCopy
                 break
             except PermissionError as e: time.sleep(1)
 
@@ -198,6 +209,7 @@ def calc2(filename, dataframe) -> float:
 
 if __name__ == "__main__":
     app = MDFAnalyzer("analysis.xlsx")
-    app.setConfig("C:/Users/xxxxx/Downloads/mdfdata", 0.1, {"計算1": calc1, "計算2": calc2})
+    app.setConfig("C:/Users/xxxxxxx/Downloads/mdfdata", 0.1, {"計算1": calc1, "計算2": calc2})
     app.calculate()
-    app.save()
+    app.save()    
+    pass
