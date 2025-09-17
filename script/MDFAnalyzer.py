@@ -28,7 +28,7 @@ class MDFAnalyzer:
         self.__xlsx.save(self.__xlsx_path)
 
     def updateMDFList(self):
-        self.__clearAnalysisData()
+        # self.__clearAnalysisData()
         
         row: int = 3
         for path in sorted(path.replace("\\", "/") for path in glob(f"{self.__mdf_dir_data.value}*.mf4")):
@@ -43,14 +43,14 @@ class MDFAnalyzer:
             self.__analysis_data(2, col).value = items[1]
             col += 1
 
-    def updateLabelList(self, functions: List):
+    def updateLabelList(self, functions: List[object]):
         labels = []
         
         for func in functions:
             labels += self.__getLabelListInFunc(inspect.getsource(func))
         self.__labels_data.value = ",".join(list(collections.Counter(labels).keys()))
 
-    def setConfig(self, mdf_dir: str = None, calc_rate: float = None, functions: Dict = None):
+    def setConfig(self, mdf_dir: str = None, calc_rate: float = None, functions: Dict[str, object] = None):
         analysis_update = False
 
         ### MDFディレクトリ
@@ -75,7 +75,8 @@ class MDFAnalyzer:
                 analysis_update = True
                 self.__calc_rate_data.value = calc_rate
 
-        if analysis_update: self.updateMDFList()
+        if analysis_update: 
+            self.updateMDFList()
 
     def calculate(self, re_calc: bool = False, mdf_copy: bool = True):
         download_list: List[DownloadPath] = []
@@ -130,8 +131,8 @@ class MDFAnalyzer:
         
         try:
             ### MDF読み込み
-            mdf = asammdf.MDF(mdf_paths.dst)
-            dataframe = mdf.to_dataframe(self.__labels_data.value.split(","), raster=self.__calc_rate_data.value)
+            with asammdf.MDF(mdf_paths.dst) as mdf:
+                dataframe = mdf.to_dataframe(self.__labels_data.value.split(","), raster=self.__calc_rate_data.value)
 
             ### データフレームを渡す
             for col, func in functions.items():
@@ -192,6 +193,7 @@ class MDFAnalyzer:
     def __clearAnalysisData(self):
         del self.__xlsx["analysis"]
         self.__analysis_data = self.__xlsx.create_sheet("analysis").cell
+        self.__analysis_data(1,1).value = "FileName"
     
 def calc1(filename, dataframe) -> float:
     print(f"{threading.current_thread().name}: call calc1")
@@ -206,6 +208,8 @@ def calc2(filename, dataframe) -> float:
     dataframe["LABEL5"]
     dataframe["LABEL6"]
     return 2.0
+
+
 
 if __name__ == "__main__":
     app = MDFAnalyzer("analysis.xlsx")
