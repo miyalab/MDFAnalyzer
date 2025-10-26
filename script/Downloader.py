@@ -1,7 +1,10 @@
+import time
 import threading
 import shutil
 from typing import List
 from enum import IntEnum, auto
+
+import ThreadPool
 
 class DownloadStatus(IntEnum):
     NoCopy = auto()
@@ -14,15 +17,24 @@ class DownloadPath:
         self.dst = dst
         self.status = status
 
-def downloadFiles(download_paths: List[DownloadPath]):
-    ### MDFをコピー
+def downloadFiles(download_paths: List[DownloadPath], parallel_download_num: int = 1):
+    ### スレッド管理
     main_thread = threading.main_thread()
+    thread_pool = ThreadPool.ThreadPool(parallel_download_num)
 
-    for paths in download_paths:
-        ### ダウンロード処理
+    ### ダウンロード関数
+    def downloadFile(paths: DownloadPath):
         paths.status = DownloadStatus.Downloading
         shutil.copy(paths.src, paths.dst)
         paths.status = DownloadStatus.Complete
 
-        ### メインスレッド終了時には中断して終了
-        if not main_thread.is_alive(): break
+    ### ダウンロードファイル登録
+    [thread_pool.submit(paths) for paths in download_paths]
+
+    ### ダウンロード終了まで待機
+    while thread_pool.isActive():
+        ### メインスレッドが機能しなくなったときはダウンロード停止
+        if not main_thread.is_alive():
+            thread_pool.stop()
+        time.sleep(1)
+    
