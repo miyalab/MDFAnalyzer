@@ -7,9 +7,9 @@ from enum import IntEnum, auto
 import ThreadPool
 
 class DownloadStatus(IntEnum):
-    NoCopy = auto()
+    NoCopy      = auto()
     Downloading = auto()
-    Complete = auto()
+    Complete    = auto()
 
 class DownloadPath:
     def __init__(self, src: str, dst: str, status: DownloadStatus):
@@ -17,19 +17,19 @@ class DownloadPath:
         self.dst = dst
         self.status = status
 
+### ダウンロード関数
+def __downloadFile(paths: DownloadPath):
+    paths.status = DownloadStatus.Downloading
+    shutil.copy(paths.src, paths.dst)
+    paths.status = DownloadStatus.Complete
+
 def downloadFiles(download_paths: List[DownloadPath], parallel_download_num: int = 1):
     ### スレッド管理
     main_thread = threading.main_thread()
     thread_pool = ThreadPool.ThreadPool(parallel_download_num)
 
-    ### ダウンロード関数
-    def downloadFile(paths: DownloadPath):
-        paths.status = DownloadStatus.Downloading
-        shutil.copy(paths.src, paths.dst)
-        paths.status = DownloadStatus.Complete
-
     ### ダウンロードファイル登録
-    [thread_pool.submit(paths) for paths in download_paths]
+    [thread_pool.submit(__downloadFile, paths) for paths in download_paths]
 
     ### ダウンロード終了まで待機
     while thread_pool.isActive():
