@@ -11,6 +11,7 @@ from glob import glob
 from typing import List, Dict, Any
 
 import Downloader
+import ThreadPool
 from Downloader import DownloadPath, DownloadStatus
 
 class MDFAnalyzer:
@@ -121,13 +122,14 @@ class MDFAnalyzer:
             threading.Thread(target=Downloader.downloadFiles, args=[download_list]).start()
             
         ### 解析開始
-        for analysis_args in analysis_list:
-            while threading.active_count() > 5: time.sleep(1)
-            threading.Thread(target=self.__analysisMDF, args=analysis_args).start()
+        thread_pool = ThreadPool.ThreadPool(10)
+        [thread_pool.submit(self.__analysisMDF, args[0], args[1], args[2]) for args in analysis_list]
+        while thread_pool.isActive():
+            time.sleep(10)
 
     def __analysisMDF(self, mdf_paths: DownloadPath, row: int, functions: Dict[int, str]):
         ### ダウンロード完了待ち
-        while mdf_paths.status == DownloadStatus.Complete: time.sleep(1)
+        while mdf_paths.status != DownloadStatus.Complete: time.sleep(1)
         
         try:
             ### MDF読み込み
@@ -209,11 +211,9 @@ def calc2(filename, dataframe) -> float:
     dataframe["LABEL6"]
     return 2.0
 
-
-
 if __name__ == "__main__":
-    app = MDFAnalyzer("analysis.xlsx")
-    app.setConfig("C:/Users/xxxxxxx/Downloads/mdfdata", 0.1, {"計算1": calc1, "計算2": calc2})
-    app.calculate()
-    app.save()    
+    # app = MDFAnalyzer("analysis.xlsx")
+    # app.setConfig("C:/Users/xxxxxxx/Downloads/mdfdata", 0.1, {"計算1": calc1, "計算2": calc2})
+    # app.calculate()
+    # app.save()    
     pass
